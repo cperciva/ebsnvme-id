@@ -1,6 +1,6 @@
 PROG	=	ebsnvme-id
 SRCS	=	main.c
-MAN	=
+MAN	=	ebsnvme-id.8
 WARNS	?=	6
 BINDIR	?=	/usr/local/sbin
 
