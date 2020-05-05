@@ -1,0 +1,75 @@
+#!/bin/sh
+
+# PROVIDE: dev_aws_disk
+# REQUIRE: FILESYSTEMS
+# BEFORE:  devd
+#
+# Add the following lines to /etc/rc.conf.local or /etc/rc.conf
+# to enable dev_aws_disk:
+#
+# dev_aws_disk_enable:	Set to YES to enable dev_aws_disk.
+#
+# Note that this script is invoked by a devd rule, but if the script is
+# not enabled via rc.conf the devd rule will have no effect.
+
+. /etc/rc.subr
+
+name="dev_aws_disk"
+rcvar=${name}_enable
+: ${dev_aws_disk_enable=NO}
+start_cmd="dev_aws_disk_start"
+stop_cmd="dev_aws_disk_stop"
+
+EBSNVMEID=/usr/local/sbin/ebsnvme-id
+
+start_ebs() {
+	volid=`${EBSNVMEID} -v $1 | cut -f 2 -d :`
+
+	ln -sf /dev/$1 /var/run/devaws/disk/linuxname/`${EBSNVMEID} -b $1`
+	ln -sf /dev/$1 /var/run/devaws/disk/ebs/`echo $volid`
+}
+
+start_eph() {
+
+	ln -sf /dev/$1 /var/run/devaws/disk/ephemeral/`${EBSNVMEID} -s $1`
+}
+
+dev_aws_disk_start() {
+
+	if [ -z "$1" ]; then
+		# Starting at boot before devd kicks in; we need to set
+		# up the /dev/aws symlink and the /var/run/devaws tree.
+		ln -shf /var/run/devaws /dev/aws
+		mkdir -p /var/run/devaws
+
+		# Get rid of anything left over from a previous boot.
+		rm -rf /var/run/devaws/disk
+
+		# Create the trees we'll drop symlinks into.
+		mkdir /var/run/devaws/disk
+		mkdir /var/run/devaws/disk/ebs
+		mkdir /var/run/devaws/disk/linuxname
+		mkdir /var/run/devaws/disk/ephemeral
+	else
+		case `${EBSNVMEID} -m $1` in
+		"Amazon Elastic Block Store") start_ebs $1 ;;
+		"Amazon EC2 NVMe Instance Storage") start_eph $1 ;;
+		esac
+	fi
+}
+
+dev_aws_disk_stop()
+{
+
+	if ! [ -z "$1" ]; then
+		# Delete symlinks to the device in question
+		for S in /var/run/devaws/disk/*/*; do
+			case `readlink $S` in
+			"/dev/$1") rm $S ;;
+			esac
+		done
+	fi
+}
+
+load_rc_config $name
+run_rc_command $*
