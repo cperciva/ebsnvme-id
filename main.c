@@ -23,6 +23,7 @@
  * SUCH DAMAGE.
  */
 
+#include <sys/endian.h>
 #include <sys/ioctl.h>
 
 #include <dev/nvme/nvme.h>
