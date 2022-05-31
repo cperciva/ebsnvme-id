@@ -51,6 +51,10 @@ dev_aws_disk_start() {
 		mkdir /var/run/devaws/disk/linuxname
 		mkdir /var/run/devaws/disk/ephemeral
 	else
+		# Only handle devices, not nvd->nda symlinks
+		if [ -L /dev/$1 ]; then
+			return
+		fi
 		case `${EBSNVMEID} -m $1` in
 		"Amazon Elastic Block Store") start_ebs $1 ;;
 		"Amazon EC2 NVMe Instance Storage") start_eph $1 ;;
