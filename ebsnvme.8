@@ -1,5 +1,5 @@
 .\"
-.\" Copyright 2020 Colin Percival
+.\" Copyright 2020, 2026 Colin Percival
 .\"
 .\" Redistribution and use in source and binary forms, with or without
 .\" modification, are permitted provided that the following conditions
@@ -22,20 +22,24 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd May 3, 2020
-.Dt EBSNVME-ID 8
+.Dd August 29, 2026
+.Dt EBSNVME 8
 .Os
 .Sh NAME
+.Nm ebsnvme , ebsnvme-id , ebsnvme-stats
+.Nd NVMe disk information tool for Amazon EC2
+.Sh SYNOPSIS
 .Nm ebsnvme-id
-.Nd NVMe disk identification tool for Amazon EC2
-.Sh SYNOPSYS
-.Nm
 .Op Fl b
 .Op Fl m
 .Op Fl s
 .Op Fl u
 .Op Fl v
-.Aq device
+.Ar device
+.Nm ebsnvme-stats
+.Op Fl i Ar interval
+.Op Fl j
+.Ar device
 .Sh DESCRIPTION
 The Amazon EC2
 .Dq Nitro
@@ -44,16 +48,28 @@ There are two types of disks so exposed: Elastic Block Store disks, which
 persist and can be detached and reattached to different virtual machines,
 and Instance Store disks (also known as
 .Dq Ephemeral
-disks), which exist only while the virual machine is running.
+disks), which exist only while the virtual machine is running.
 .Pp
 Amazon Linux provides a tool
-.Dq ebsnvme-id
-for identifying the attached Elastic Block Store disks; this
+.Dq ebsnvme
+for identifying and retrieving performance statistics on the attached Elastic
+Block Store disks; this
 .Nm
 is a re-implementation which also exposes some information about Instance
 Store disks.
 .Pp
-The options are as follows:
+This tool can be invoked as
+.Nm ebsnvme Cm id
+which is equivalent to
+.Nm ebsnvme-id ,
+or as
+.Nm ebsnvme Cm stats
+which is equivalent to
+.Nm ebsnvme-stats .
+.Pp
+The options to
+.Nm ebsnvme-id
+are as follows:
 .Bl -tag -width indent
 .It Fl b
 Print the
@@ -78,17 +94,29 @@ followed by the volume ID of the Elastic Block Store disk.
 .El
 .Pp
 If no options are specified,
-.Nm
+.Nm ebsnvme-id
 operates as if invoked with the options
 .Fl v
 .Fl b .
 .Pp
-If multiple option are specified, output is printed for each
+If multiple options are specified, output is printed for each
 option, in the order
 .Fl v
 .Op Fl b | Fl u
 .Fl m
 .Fl s .
+.Pp
+The options to
+.Nm ebsnvme-stats
+are as follows:
+.Bl -tag -width indent
+.It Fl i Ar interval
+After the initial statistics, print further statistics every
+.Ar interval
+seconds showing the delta since the previously printed statistics.
+.It Fl j
+Print statistics in JSON format.
+.El
 .Sh SEE ALSO
 .Xr nvmecontrol 8
 .Sh AUTHORS
