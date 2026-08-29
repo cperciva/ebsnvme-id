@@ -29,8 +29,10 @@
 #include <dev/nvme/nvme.h>
 
 #include <err.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <inttypes.h>
+#include <limits.h>
 #include <paths.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -45,6 +47,7 @@
 
 #define CVT_LE32TOH(x)	((x) = le32toh(x))
 #define CVT_LE64TOH(x)	((x) = le64toh(x))
+#define SUBXY(x, y, field)	((x)->field = (x)->field - (y)->field)
 
 struct nvme_histogram_bin {
 	uint64_t lower;
@@ -82,6 +85,7 @@ _Static_assert(sizeof(struct nvme_amzn_stats_data) == 4096,
     "stats page not packed");
 
 static int opt_bu = 0;
+static unsigned long opt_i = 0;
 static int opt_m = 0;
 static int opt_s = 0;
 static int opt_v = 0;
@@ -220,6 +224,7 @@ ebsnvme_stats_print(const struct nvme_amzn_stats_data * stats)
 	printf("\n");
 	print_histogram("Write IO Latency Histogram (us)",
 	    &stats->write_io_latency_histogram);
+	fflush(stdout);
 }
 
 static void
@@ -276,13 +281,60 @@ ebsnvme_stats_read(int fd, const char * devname,
 		errx(1, "Not an EBS device: %s", devname);
 }
 
+/* Set x := x - y. */
+static void
+ebsnvme_histogram_sub(struct ebs_nvme_histogram * x,
+    const struct ebs_nvme_histogram * y)
+{
+	size_t i;
+
+	for (i = 0; i < 64; i++)
+		SUBXY(x, y, bins[i].count);
+}
+
+/* Set x := x - y. */
+static void
+ebsnvme_stats_sub(struct nvme_amzn_stats_data * x,
+    const struct nvme_amzn_stats_data * y)
+{
+
+	SUBXY(x, y, total_read_ops);
+	SUBXY(x, y, total_write_ops);
+	SUBXY(x, y, total_read_bytes);
+	SUBXY(x, y, total_write_bytes);
+	SUBXY(x, y, total_read_time);
+	SUBXY(x, y, total_write_time);
+	SUBXY(x, y, ebs_volume_performance_exceeded_iops);
+	SUBXY(x, y, ebs_volume_performance_exceeded_tp);
+	SUBXY(x, y, ec2_instance_ebs_performance_exceeded_iops);
+	SUBXY(x, y, ec2_instance_ebs_performance_exceeded_tp);
+	ebsnvme_histogram_sub(&x->read_io_latency_histogram,
+	    &y->read_io_latency_histogram);
+	ebsnvme_histogram_sub(&x->write_io_latency_histogram,
+	    &y->write_io_latency_histogram);
+}
+
 static void
 ebsnvme_stats(int fd, const char * devname)
 {
-	struct nvme_amzn_stats_data stats;
+	struct nvme_amzn_stats_data ostats, stats, diff;
+
+	if (opt_i > 0)
+		printf("Polling EBS stats every %lu sec(s);"
+		    " press Ctrl+C to stop\n", opt_i);
 
 	ebsnvme_stats_read(fd, devname, &stats);
 	ebsnvme_stats_print(&stats);
+
+	while (opt_i > 0) {
+		sleep(opt_i);
+		ostats = stats;
+		ebsnvme_stats_read(fd, devname, &stats);
+		diff = stats;
+		ebsnvme_stats_sub(&diff, &ostats);
+		printf("\n\n");
+		ebsnvme_stats_print(&diff);
+	}
 }
 
 static void
@@ -292,8 +344,8 @@ usage(void)
 	fprintf(stderr,
 	    "usage: ebsnvme id [-b] [-m] [-s] [-u] [-v] device\n"
 	    "       ebsnvme-id [-b] [-m] [-s] [-u] [-v] device\n"
-	    "       ebsnvme stats device\n"
-	    "       ebsnvme-stats device\n");
+	    "       ebsnvme stats [-i interval] device\n"
+	    "       ebsnvme-stats [-i interval] device\n");
 	exit(1);
 }
 
@@ -338,7 +390,7 @@ main(int argc, char *argv[])
 		errx(1, "don't know who I am");
 
 	/* Process command line. */
-	while ((ch = getopt(argc, argv, "bmsuv")) != -1) {
+	while ((ch = getopt(argc, argv, "bi:msuv")) != -1) {
 		switch (ch) {
 		case 'b':	/* id */
 		case 'u':	/* id */
@@ -349,6 +401,16 @@ main(int argc, char *argv[])
 			 * udev rules".
 			 */
 			opt_bu = 1;
+			break;
+		case 'i':	/* stats */
+			errno = 0;
+			opt_i = strtoul(optarg, &s, 0);
+			if ((*s != '\0') ||
+#if UINT_MAX < ULONG_MAX
+			    (opt_i > (unsigned int)(-1)) ||
+#endif
+			    (errno == EINVAL) || (errno == ERANGE))
+				errx(1, "invalid argument to -i: %s", optarg);
 			break;
 		case 'm':	/* id */
 			/* FreeBSD-specific option: Output Model Number. */
@@ -377,6 +439,8 @@ main(int argc, char *argv[])
 	/* Check unmatched options. */
 	if ((strcmp(cmd, "stats") == 0) &&
 	    (opt_bu || opt_m || opt_s || opt_v))
+		usage();
+	if ((strcmp(cmd, "id") == 0) && opt_i)
 		usage();
 
 	/* We should have one option left -- the device name. */
