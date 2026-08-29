@@ -75,7 +75,8 @@ usage(void)
 {
 
 	fprintf(stderr,
-	    "usage: ebsnvme-id [-b] [-m] [-s] [-u] [-v] device\n");
+	    "usage: ebsnvme id [-b] [-m] [-s] [-u] [-v] device\n"
+	    "       ebsnvme-id [-b] [-m] [-s] [-u] [-v] device\n");
 	exit(1);
 }
 
@@ -96,6 +97,30 @@ main(int argc, char *argv[])
 	char * s_sn;
 	char * s_mn;
 	char * s_linuxname;
+	const char * progname;
+	const char * cmd = NULL;
+
+	/* Decide which ebsnvme tool we are. */
+	if ((argc == 0) || (argv[0] == NULL))
+		errx(1, "don't know who I am");
+	if ((progname = strrchr(argv[0], '/')) == NULL)
+		progname = argv[0];
+	else
+		progname++;
+	if (strcmp(progname, "ebsnvme-id") == 0)
+		cmd = "id";
+	else if (strcmp(progname, "ebsnvme") == 0) {
+		if (argc == 1)
+			usage();
+		if (strcmp(argv[1], "id") == 0)
+			cmd = "id";
+		if (cmd == NULL)
+			usage();
+		argv++;
+		argc--;
+	}
+	if (cmd == NULL)
+		errx(1, "don't know who I am");
 
 	/* Process command line. */
 	while ((ch = getopt(argc, argv, "bmsuv")) != -1) {
