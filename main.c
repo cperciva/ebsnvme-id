@@ -206,7 +206,6 @@ main(int argc, char *argv[])
 		err(1, "NVME_OPC_IDENTIFY failed");
 	if (nvme_completion_is_error(&c.cpl))
 		errx(1, "identify request returned error");
-	close(fd);
 
 	/* The vendor should be Amazon for any disks we're looking at. */
 	if (le16toh(d.vid) != AMZN_NVME_VID)
@@ -255,6 +254,9 @@ main(int argc, char *argv[])
 		/* Print the Serial Number, even for non-EBS disks. */
 		printf("%s\n", s_sn);
 	}
+
+	/* Close the device descriptor. */
+	close(fd);
 
 	/* Success! */
 	exit(0);
