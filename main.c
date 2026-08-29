@@ -1,5 +1,5 @@
 /*-
- * Copyright 2020 Colin Percival
+ * Copyright 2020, 2026 Colin Percival
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -30,6 +30,7 @@
 
 #include <err.h>
 #include <fcntl.h>
+#include <inttypes.h>
 #include <paths.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -37,8 +38,48 @@
 #include <unistd.h>
 
 #define AMZN_NVME_VID 0x1d0f
+#define AMZN_NVME_STATS_LOGPAGE_ID 0xd0
+#define AMZN_NVME_STATS_MAGIC 0x3c23b510
 #define AMZN_NVME_EBS_MN "Amazon Elastic Block Store"
 #define AMZN_NVME_ISTORE_MN "Amazon EC2 NVMe Instance Storage"
+
+#define CVT_LE32TOH(x)	((x) = le32toh(x))
+#define CVT_LE64TOH(x)	((x) = le64toh(x))
+
+struct nvme_histogram_bin {
+	uint64_t lower;
+	uint64_t upper;
+	uint32_t count;
+	uint32_t reserved0;
+};
+
+struct ebs_nvme_histogram {
+	uint64_t num_bins;
+	struct nvme_histogram_bin bins[64];
+};
+
+struct nvme_amzn_stats_data {
+	uint32_t magic;
+	uint32_t reserved0;
+	uint64_t total_read_ops;
+	uint64_t total_write_ops;
+	uint64_t total_read_bytes;
+	uint64_t total_write_bytes;
+	/* Next 6 fields are time in microseconds. */
+	uint64_t total_read_time;
+	uint64_t total_write_time;
+	uint64_t ebs_volume_performance_exceeded_iops;
+	uint64_t ebs_volume_performance_exceeded_tp;
+	uint64_t ec2_instance_ebs_performance_exceeded_iops;
+	uint64_t ec2_instance_ebs_performance_exceeded_tp;
+	uint64_t volume_queue_length;
+	uint8_t reserved1[416];
+	struct ebs_nvme_histogram read_io_latency_histogram;
+	struct ebs_nvme_histogram write_io_latency_histogram;
+	uint8_t reserved2[496];
+};
+_Static_assert(sizeof(struct nvme_amzn_stats_data) == 4096,
+    "stats page not packed");
 
 static int opt_bu = 0;
 static int opt_m = 0;
@@ -125,12 +166,127 @@ ebsnvme_id(const char * devname, const struct nvme_controller_data * d)
 }
 
 static void
+print_histogram(const char * s, const struct ebs_nvme_histogram * h)
+{
+	size_t i;
+
+	printf("%s\n", s);
+	printf("Number of bins: %" PRIu64 "\n"
+	    "=================================\n"
+	    "Lower       Upper        IO Count\n"
+	    "=================================\n",
+	    h->num_bins);
+	for (i = 0; i < h->num_bins && i < 64; i++)
+		printf("[%-8" PRIu64 " - %-8" PRIu64 "] => %" PRIu32 "\n",
+		    h->bins[i].lower,
+		    h->bins[i].upper,
+		    h->bins[i].count);
+}
+
+static void
+ebsnvme_stats_print(const struct nvme_amzn_stats_data * stats)
+{
+
+	printf("Total Ops\n"
+	    "  Read: %" PRIu64 "\n"
+	    "  Write: %" PRIu64 "\n"
+	    "Total Bytes\n"
+	    "  Read: %" PRIu64 "\n"
+	    "  Write: %" PRIu64 "\n"
+	    "Total Time (us)\n"
+	    "  Read: %" PRIu64 "\n"
+	    "  Write: %" PRIu64 "\n"
+	    "EBS Volume Performance Exceeded (us)\n"
+	    "  IOPS: %" PRIu64 "\n"
+	    "  Throughput: %" PRIu64 "\n"
+	    "EC2 Instance EBS Performance Exceeded (us)\n"
+	    "  IOPS: %" PRIu64 "\n"
+	    "  Throughput: %" PRIu64 "\n"
+	    "Queue Length (point in time): %" PRIu64 "\n",
+	    stats->total_read_ops,
+	    stats->total_write_ops,
+	    stats->total_read_bytes,
+	    stats->total_write_bytes,
+	    stats->total_read_time,
+	    stats->total_write_time,
+	    stats->ebs_volume_performance_exceeded_iops,
+	    stats->ebs_volume_performance_exceeded_tp,
+	    stats->ec2_instance_ebs_performance_exceeded_iops,
+	    stats->ec2_instance_ebs_performance_exceeded_tp,
+	    stats->volume_queue_length);
+	printf("\n");
+	print_histogram("Read IO Latency Histogram (us)",
+	    &stats->read_io_latency_histogram);
+	printf("\n");
+	print_histogram("Write IO Latency Histogram (us)",
+	    &stats->write_io_latency_histogram);
+}
+
+static void
+le_histogram_toh(struct ebs_nvme_histogram * h)
+{
+	size_t i;
+
+	CVT_LE64TOH(h->num_bins);
+	for (i = 0; i < 64; i++) {
+		CVT_LE64TOH(h->bins[i].lower);
+		CVT_LE64TOH(h->bins[i].upper);
+		CVT_LE32TOH(h->bins[i].count);
+	}
+}
+
+static void
+ebsnvme_stats(int fd, const char * devname)
+{
+	struct nvme_pt_command c;
+	struct nvme_amzn_stats_data stats;
+
+	/* Log page request */
+	memset(&c, 0, sizeof(c));
+	memset(&stats, 0, sizeof(stats));
+	c.cmd.opc = NVME_OPC_GET_LOG_PAGE;
+	c.cmd.nsid = htole32(1);
+	c.cmd.cdw10 = htole32(AMZN_NVME_STATS_LOGPAGE_ID | (1023 << 16));
+	c.buf = &stats;
+	c.len = sizeof(stats);
+	c.is_read = 1;
+	if (ioctl(fd, NVME_PASSTHROUGH_CMD, &c))
+		err(1, "NVME_OPC_GET_LOG_PAGE failed");
+	if (nvme_completion_is_error(&c.cpl))
+		errx(1, "log page request returned error");
+
+	/* Convert statistics from little-endian byte order. */
+	CVT_LE32TOH(stats.magic);
+	CVT_LE64TOH(stats.total_read_ops);
+	CVT_LE64TOH(stats.total_write_ops);
+	CVT_LE64TOH(stats.total_read_bytes);
+	CVT_LE64TOH(stats.total_write_bytes);
+	CVT_LE64TOH(stats.total_read_time);
+	CVT_LE64TOH(stats.total_write_time);
+	CVT_LE64TOH(stats.ebs_volume_performance_exceeded_iops);
+	CVT_LE64TOH(stats.ebs_volume_performance_exceeded_tp);
+	CVT_LE64TOH(stats.ec2_instance_ebs_performance_exceeded_iops);
+	CVT_LE64TOH(stats.ec2_instance_ebs_performance_exceeded_tp);
+	CVT_LE64TOH(stats.volume_queue_length);
+	le_histogram_toh(&stats.read_io_latency_histogram);
+	le_histogram_toh(&stats.write_io_latency_histogram);
+
+	/* Check magic. */
+	if (stats.magic != AMZN_NVME_STATS_MAGIC)
+		errx(1, "Not an EBS device: %s", devname);
+
+	ebsnvme_stats_print(&stats);
+}
+
+static void
 usage(void)
 {
 
 	fprintf(stderr,
 	    "usage: ebsnvme id [-b] [-m] [-s] [-u] [-v] device\n"
-	    "       ebsnvme-id [-b] [-m] [-s] [-u] [-v] device\n");
+	    "       ebsnvme-id [-b] [-m] [-s] [-u] [-v] device\n"
+	    "       ebsnvme stats device\n"
+	    "       ebsnvme-stats device\n");
 	exit(1);
 }
 
@@ -157,11 +313,15 @@ main(int argc, char *argv[])
 		progname++;
 	if (strcmp(progname, "ebsnvme-id") == 0)
 		cmd = "id";
+	else if (strcmp(progname, "ebsnvme-stats") == 0)
+		cmd = "stats";
 	else if (strcmp(progname, "ebsnvme") == 0) {
 		if (argc == 1)
 			usage();
 		if (strcmp(argv[1], "id") == 0)
 			cmd = "id";
+		else if (strcmp(argv[1], "stats") == 0)
+			cmd = "stats";
 		if (cmd == NULL)
 			usage();
 		argv++;
@@ -206,6 +366,11 @@ main(int argc, char *argv[])
 	}
 	argc -= optind;
 	argv += optind;
+
+	/* Check unmatched options. */
+	if ((strcmp(cmd, "stats") == 0) &&
+	    (opt_bu || opt_m || opt_s || opt_v))
+		usage();
 
 	/* We should have one option left -- the device name. */
 	if (argc != 1)
@@ -266,6 +431,8 @@ main(int argc, char *argv[])
 
 	if (strcmp(cmd, "id") == 0)
 		ebsnvme_id(devname, &d);
+	else if (strcmp(cmd, "stats") == 0)
+		ebsnvme_stats(fd, devname);
 
 	/* Close the device descriptor. */
 	close(fd);
