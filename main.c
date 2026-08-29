@@ -173,8 +173,8 @@ main(int argc, char *argv[])
 	/* Process command line. */
 	while ((ch = getopt(argc, argv, "bmsuv")) != -1) {
 		switch (ch) {
-		case 'b':
-		case 'u':
+		case 'b':	/* id */
+		case 'u':	/* id */
 			/*
 			 * The Amazon Linux ebsnvme-id tool has two options
 			 * which behave identically: "Return block device
@@ -183,11 +183,11 @@ main(int argc, char *argv[])
 			 */
 			opt_bu = 1;
 			break;
-		case 'm':
+		case 'm':	/* id */
 			/* FreeBSD-specific option: Output Model Number. */
 			opt_m = 1;
 			break;
-		case 's':
+		case 's':	/* id */
 			/*
 			 * FreeBSD-specific option: Output Serial Number.
 			 * Unlike the -v option, this applies to Instance
@@ -195,7 +195,7 @@ main(int argc, char *argv[])
 			 */
 			opt_s = 1;
 			break;
-		case 'v':
+		case 'v':	/* id */
 			/* Return volume ID. */
 			opt_v = 1;
 			break;
