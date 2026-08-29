@@ -99,6 +99,7 @@ main(int argc, char *argv[])
 	char * s_linuxname;
 	const char * progname;
 	const char * cmd = NULL;
+	char * mn;
 
 	/* Decide which ebsnvme tool we are. */
 	if ((argc == 0) || (argv[0] == NULL))
@@ -211,19 +212,21 @@ main(int argc, char *argv[])
 	if (le16toh(d.vid) != AMZN_NVME_VID)
 		errx(1, "Not an EC2 disk: %s", devname);
 
+	/*
+	 * Extract the model number and sanity-check.  If the model number
+	 * doesn't match EBS volumes or Instance Storage disks, something
+	 * weird is going on; throw an error, since it probably means this
+	 * utility needs to be updated.
+	 */
+	mn = extract(d.mn, NVME_MODEL_NUMBER_LENGTH);
+	if (strcmp(mn, AMZN_NVME_EBS_MN) &&
+	    strcmp(mn, AMZN_NVME_ISTORE_MN))
+		errx(1, "Not an EBS or Instance Storage disk: %s", devname);
+
 	/* Extract serial number, model number, and block device name. */
 	s_sn = extract(d.sn, NVME_SERIAL_NUMBER_LENGTH);
 	s_mn = extract(d.mn, NVME_MODEL_NUMBER_LENGTH);
 	s_linuxname = extract(d.vs, 32);
-
-	/*
-	 * If this isn't an EBS volume or an Instance Storage disk,
-	 * something weird is going on; throw an error, since it probably
-	 * means this utility needs to be updated.
-	 */
-	if (strcmp(s_mn, AMZN_NVME_EBS_MN) &&
-	    strcmp(s_mn, AMZN_NVME_ISTORE_MN))
-		errx(1, "Not an EBS or Instance Storage disk: %s", devname);
 
 	/* Output the desired information. */
 	if (opt_v) {
