@@ -86,6 +86,7 @@ _Static_assert(sizeof(struct nvme_amzn_stats_data) == 4096,
 
 static int opt_bu = 0;
 static unsigned long opt_i = 0;
+static int opt_j = 0;
 static int opt_m = 0;
 static int opt_s = 0;
 static int opt_v = 0;
@@ -228,6 +229,66 @@ ebsnvme_stats_print(const struct nvme_amzn_stats_data * stats)
 }
 
 static void
+print_histogram_json(const char * s, const struct ebs_nvme_histogram * h)
+{
+	size_t i;
+
+	printf(", "
+	    "\"%s\": {"
+	    "\"num_bins\": %" PRIu64 ", "
+	    "\"bins\": [",
+	    s, h->num_bins);
+	for (i = 0; i < h->num_bins && i < 64; i++) {
+		if (i)
+			printf(", ");
+		printf("{"
+		    "\"lower\": %" PRIu64 ", "
+		    "\"upper\": %" PRIu64 ", "
+		    "\"count\": %" PRIu32
+		    "}",
+		    h->bins[i].lower,
+		    h->bins[i].upper,
+		    h->bins[i].count);
+	}
+	printf("]}");
+}
+
+static void
+ebsnvme_stats_print_json(const struct nvme_amzn_stats_data * stats)
+{
+
+	printf("{"
+	    "\"total_read_ops\": %" PRIu64 ", "
+	    "\"total_write_ops\": %" PRIu64 ", "
+	    "\"total_read_bytes\": %" PRIu64 ", "
+	    "\"total_write_bytes\": %" PRIu64 ", "
+	    "\"total_read_time\": %" PRIu64 ", "
+	    "\"total_write_time\": %" PRIu64 ", "
+	    "\"ebs_volume_performance_exceeded_iops\": %" PRIu64 ", "
+	    "\"ebs_volume_performance_exceeded_tp\": %" PRIu64 ", "
+	    "\"ec2_instance_ebs_performance_exceeded_iops\": %" PRIu64 ", "
+	    "\"ec2_instance_ebs_performance_exceeded_tp\": %" PRIu64 ", "
+	    "\"volume_queue_length\": %" PRIu64,
+	    stats->total_read_ops,
+	    stats->total_write_ops,
+	    stats->total_read_bytes,
+	    stats->total_write_bytes,
+	    stats->total_read_time,
+	    stats->total_write_time,
+	    stats->ebs_volume_performance_exceeded_iops,
+	    stats->ebs_volume_performance_exceeded_tp,
+	    stats->ec2_instance_ebs_performance_exceeded_iops,
+	    stats->ec2_instance_ebs_performance_exceeded_tp,
+	    stats->volume_queue_length);
+	print_histogram_json("read_io_latency_histogram",
+	    &stats->read_io_latency_histogram);
+	print_histogram_json("write_io_latency_histogram",
+	    &stats->write_io_latency_histogram);
+	printf("}\n");
+	fflush(stdout);
+}
+
+static void
 le_histogram_toh(struct ebs_nvme_histogram * h)
 {
 	size_t i;
@@ -324,7 +385,10 @@ ebsnvme_stats(int fd, const char * devname)
 		    " press Ctrl+C to stop\n", opt_i);
 
 	ebsnvme_stats_read(fd, devname, &stats);
-	ebsnvme_stats_print(&stats);
+	if (opt_j)
+		ebsnvme_stats_print_json(&stats);
+	else
+		ebsnvme_stats_print(&stats);
 
 	while (opt_i > 0) {
 		sleep(opt_i);
@@ -333,7 +397,10 @@ ebsnvme_stats(int fd, const char * devname)
 		diff = stats;
 		ebsnvme_stats_sub(&diff, &ostats);
 		printf("\n\n");
-		ebsnvme_stats_print(&diff);
+		if (opt_j)
+			ebsnvme_stats_print_json(&diff);
+		else
+			ebsnvme_stats_print(&diff);
 	}
 }
 
@@ -344,8 +411,8 @@ usage(void)
 	fprintf(stderr,
 	    "usage: ebsnvme id [-b] [-m] [-s] [-u] [-v] device\n"
 	    "       ebsnvme-id [-b] [-m] [-s] [-u] [-v] device\n"
-	    "       ebsnvme stats [-i interval] device\n"
-	    "       ebsnvme-stats [-i interval] device\n");
+	    "       ebsnvme stats [-i interval] [-j] device\n"
+	    "       ebsnvme-stats [-i interval] [-j] device\n");
 	exit(1);
 }
 
@@ -390,7 +457,7 @@ main(int argc, char *argv[])
 		errx(1, "don't know who I am");
 
 	/* Process command line. */
-	while ((ch = getopt(argc, argv, "bi:msuv")) != -1) {
+	while ((ch = getopt(argc, argv, "bi:jmsuv")) != -1) {
 		switch (ch) {
 		case 'b':	/* id */
 		case 'u':	/* id */
@@ -411,6 +478,10 @@ main(int argc, char *argv[])
 #endif
 			    (errno == EINVAL) || (errno == ERANGE))
 				errx(1, "invalid argument to -i: %s", optarg);
+			break;
+		case 'j':	/* stats */
+			/* Print output as JSON. */
+			opt_j = 1;
 			break;
 		case 'm':	/* id */
 			/* FreeBSD-specific option: Output Model Number. */
@@ -440,7 +511,8 @@ main(int argc, char *argv[])
 	if ((strcmp(cmd, "stats") == 0) &&
 	    (opt_bu || opt_m || opt_s || opt_v))
 		usage();
-	if ((strcmp(cmd, "id") == 0) && opt_i)
+	if ((strcmp(cmd, "id") == 0) &&
+	    (opt_i || opt_j))
 		usage();
 
 	/* We should have one option left -- the device name. */
