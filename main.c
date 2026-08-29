@@ -40,6 +40,11 @@
 #define AMZN_NVME_EBS_MN "Amazon Elastic Block Store"
 #define AMZN_NVME_ISTORE_MN "Amazon EC2 NVMe Instance Storage"
 
+static int opt_bu = 0;
+static int opt_m = 0;
+static int opt_s = 0;
+static int opt_v = 0;
+
 /* Extract a string from NVMe metadata. */
 static char *
 extract(const uint8_t * buf, size_t buflen)
@@ -71,6 +76,55 @@ extract(const uint8_t * buf, size_t buflen)
 }
 
 static void
+ebsnvme_id(const char * devname, const struct nvme_controller_data * d)
+{
+	char * s_sn;
+	char * s_mn;
+	char * s_linuxname;
+
+	/* If mode not provided, default to -b -v as in Amazon Linux. */
+	if ((opt_bu | opt_m | opt_s | opt_v) == 0) {
+		opt_bu = 1;
+		opt_v = 1;
+	}
+
+	/* Extract serial number, model number, and block device name. */
+	s_sn = extract(d->sn, NVME_SERIAL_NUMBER_LENGTH);
+	s_mn = extract(d->mn, NVME_MODEL_NUMBER_LENGTH);
+	s_linuxname = extract(d->vs, 32);
+
+	/* Output the desired information. */
+	if (opt_v) {
+		/* Print the volume ID; EBS volumes only. */
+		if (strcmp(s_mn, AMZN_NVME_EBS_MN))
+			errx(1, "Not an EBS device: %s", devname);
+		printf("Volume ID: ");
+		if ((strncmp(s_sn, "vol", 3) == 0) &&
+		    (strncmp(s_sn, "vol-", 4) != 0))
+			printf("vol-%s\n", &s_sn[3]);
+		else
+			printf("%s\n", s_sn);
+	}
+	if (opt_bu) {
+		/* Print the linux device name; EBS volumes only. */
+		if (strcmp(s_mn, AMZN_NVME_EBS_MN))
+			errx(1, "Not an EBS device: %s", devname);
+		if (strncmp(s_linuxname, "/dev/", 5) == 0)
+			printf("%s\n", &s_linuxname[5]);
+		else
+			printf("%s\n", s_linuxname);
+	}
+	if (opt_m) {
+		/* Print the Model Number, even for non-EBS disks. */
+		printf("%s\n", s_mn);
+	}
+	if (opt_s) {
+		/* Print the Serial Number, even for non-EBS disks. */
+		printf("%s\n", s_sn);
+	}
+}
+
+static void
 usage(void)
 {
 
@@ -86,17 +140,10 @@ main(int argc, char *argv[])
 	struct nvme_get_nsid nsid;
 	struct nvme_pt_command c;
 	struct nvme_controller_data d;
-	int opt_bu = 0;
-	int opt_m = 0;
-	int opt_s = 0;
-	int opt_v = 0;
 	int ch;
 	const char * devname;
 	char * s;
 	int fd;
-	char * s_sn;
-	char * s_mn;
-	char * s_linuxname;
 	const char * progname;
 	const char * cmd = NULL;
 	char * mn;
@@ -169,12 +216,6 @@ main(int argc, char *argv[])
 	if (strncmp(devname, _PATH_DEV, strlen(_PATH_DEV)) == 0)
 		devname = &devname[strlen(_PATH_DEV)];
 
-	/* If mode not provided, default to -b -v as in Amazon Linux. */
-	if ((opt_bu | opt_m | opt_s | opt_v) == 0) {
-		opt_bu = 1;
-		opt_v = 1;
-	}
-
 	/* Construct path to device and open it. */
 	if (asprintf(&s, "%s%s", _PATH_DEV, devname) == -1)
 		err(1, "asprintf");
@@ -223,40 +264,8 @@ main(int argc, char *argv[])
 	    strcmp(mn, AMZN_NVME_ISTORE_MN))
 		errx(1, "Not an EBS or Instance Storage disk: %s", devname);
 
-	/* Extract serial number, model number, and block device name. */
-	s_sn = extract(d.sn, NVME_SERIAL_NUMBER_LENGTH);
-	s_mn = extract(d.mn, NVME_MODEL_NUMBER_LENGTH);
-	s_linuxname = extract(d.vs, 32);
-
-	/* Output the desired information. */
-	if (opt_v) {
-		/* Print the volume ID; EBS volumes only. */
-		if (strcmp(s_mn, AMZN_NVME_EBS_MN))
-			errx(1, "Not an EBS device: %s", devname);
-		printf("Volume ID: ");
-		if ((strncmp(s_sn, "vol", 3) == 0) &&
-		    (strncmp(s_sn, "vol-", 4) != 0))
-			printf("vol-%s\n", &s_sn[3]);
-		else
-			printf("%s\n", s_sn);
-	}
-	if (opt_bu) {
-		/* Print the linux device name; EBS volumes only. */
-		if (strcmp(s_mn, AMZN_NVME_EBS_MN))
-			errx(1, "Not an EBS device: %s", devname);
-		if (strncmp(s_linuxname, "/dev/", 5) == 0)
-			printf("%s\n", &s_linuxname[5]);
-		else
-			printf("%s\n", s_linuxname);
-	}
-	if (opt_m) {
-		/* Print the Model Number, even for non-EBS disks. */
-		printf("%s\n", s_mn);
-	}
-	if (opt_s) {
-		/* Print the Serial Number, even for non-EBS disks. */
-		printf("%s\n", s_sn);
-	}
+	if (strcmp(cmd, "id") == 0)
+		ebsnvme_id(devname, &d);
 
 	/* Close the device descriptor. */
 	close(fd);
