@@ -171,6 +171,7 @@ main(int argc, char *argv[])
 
 	/* Ask the NVMe controller to identify itself. */
 	memset(&c, 0, sizeof(c));
+	memset(&d, 0, sizeof(d));
 	c.cmd.opc = NVME_OPC_IDENTIFY;
 	c.cmd.cdw10 = htole32(1);
 	c.buf = &d;
