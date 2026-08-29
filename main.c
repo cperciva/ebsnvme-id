@@ -236,19 +236,19 @@ le_histogram_toh(struct ebs_nvme_histogram * h)
 }
 
 static void
-ebsnvme_stats(int fd, const char * devname)
+ebsnvme_stats_read(int fd, const char * devname,
+    struct nvme_amzn_stats_data * stats)
 {
 	struct nvme_pt_command c;
-	struct nvme_amzn_stats_data stats;
 
 	/* Log page request */
 	memset(&c, 0, sizeof(c));
-	memset(&stats, 0, sizeof(stats));
+	memset(stats, 0, sizeof(*stats));
 	c.cmd.opc = NVME_OPC_GET_LOG_PAGE;
 	c.cmd.nsid = htole32(1);
 	c.cmd.cdw10 = htole32(AMZN_NVME_STATS_LOGPAGE_ID | (1023 << 16));
-	c.buf = &stats;
-	c.len = sizeof(stats);
+	c.buf = stats;
+	c.len = sizeof(*stats);
 	c.is_read = 1;
 	if (ioctl(fd, NVME_PASSTHROUGH_CMD, &c))
 		err(1, "NVME_OPC_GET_LOG_PAGE failed");
@@ -256,25 +256,32 @@ ebsnvme_stats(int fd, const char * devname)
 		errx(1, "log page request returned error");
 
 	/* Convert statistics from little-endian byte order. */
-	CVT_LE32TOH(stats.magic);
-	CVT_LE64TOH(stats.total_read_ops);
-	CVT_LE64TOH(stats.total_write_ops);
-	CVT_LE64TOH(stats.total_read_bytes);
-	CVT_LE64TOH(stats.total_write_bytes);
-	CVT_LE64TOH(stats.total_read_time);
-	CVT_LE64TOH(stats.total_write_time);
-	CVT_LE64TOH(stats.ebs_volume_performance_exceeded_iops);
-	CVT_LE64TOH(stats.ebs_volume_performance_exceeded_tp);
-	CVT_LE64TOH(stats.ec2_instance_ebs_performance_exceeded_iops);
-	CVT_LE64TOH(stats.ec2_instance_ebs_performance_exceeded_tp);
-	CVT_LE64TOH(stats.volume_queue_length);
-	le_histogram_toh(&stats.read_io_latency_histogram);
-	le_histogram_toh(&stats.write_io_latency_histogram);
+	CVT_LE32TOH(stats->magic);
+	CVT_LE64TOH(stats->total_read_ops);
+	CVT_LE64TOH(stats->total_write_ops);
+	CVT_LE64TOH(stats->total_read_bytes);
+	CVT_LE64TOH(stats->total_write_bytes);
+	CVT_LE64TOH(stats->total_read_time);
+	CVT_LE64TOH(stats->total_write_time);
+	CVT_LE64TOH(stats->ebs_volume_performance_exceeded_iops);
+	CVT_LE64TOH(stats->ebs_volume_performance_exceeded_tp);
+	CVT_LE64TOH(stats->ec2_instance_ebs_performance_exceeded_iops);
+	CVT_LE64TOH(stats->ec2_instance_ebs_performance_exceeded_tp);
+	CVT_LE64TOH(stats->volume_queue_length);
+	le_histogram_toh(&stats->read_io_latency_histogram);
+	le_histogram_toh(&stats->write_io_latency_histogram);
 
 	/* Check magic. */
-	if (stats.magic != AMZN_NVME_STATS_MAGIC)
+	if (stats->magic != AMZN_NVME_STATS_MAGIC)
 		errx(1, "Not an EBS device: %s", devname);
+}
 
+static void
+ebsnvme_stats(int fd, const char * devname)
+{
+	struct nvme_amzn_stats_data stats;
+
+	ebsnvme_stats_read(fd, devname, &stats);
 	ebsnvme_stats_print(&stats);
 }
 
